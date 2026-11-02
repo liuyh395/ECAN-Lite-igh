@@ -1,0 +1,10 @@
+[package]
+name = "ucan-mit-motor-simulator"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SocketCAN CAN FD MIT motor simulator for ECAN-Lite4 IgH examples"
+
+[dependencies]
+ctrlc = "3"
+libc = "0.2"
