@@ -117,6 +117,16 @@ if(UNIX)
     target_link_libraries(igh_example_mit_protocol PUBLIC m)
 endif()
 
+add_library(dm_motor_protocol STATIC
+    dm_motor/dm_motor_protocol.c
+)
+target_include_directories(dm_motor_protocol PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/dm_motor
+)
+if(UNIX)
+    target_link_libraries(dm_motor_protocol PUBLIC m)
+endif()
+
 if(BUILD_TESTING)
     add_executable(igh_pdo_mutation_test tests/pdo_mutation_test.c)
     target_link_libraries(igh_pdo_mutation_test PRIVATE ecan_igh_mcan_pdo_codec)
@@ -147,6 +157,12 @@ if(BUILD_TESTING)
         igh_example_mit_protocol
     )
     add_test(NAME igh_mit_canfd_protocol COMMAND igh_mit_canfd_protocol_test)
+
+    add_executable(dm_motor_protocol_test
+        dm_motor/dm_motor_protocol_test.c
+    )
+    target_link_libraries(dm_motor_protocol_test PRIVATE dm_motor_protocol)
+    add_test(NAME dm_motor_protocol COMMAND dm_motor_protocol_test)
 
     if(UNIX)
         add_executable(igh_rt_support_test
@@ -185,6 +201,40 @@ if(ECAN_IGH_BUILD_DEMO STREQUAL "ON" OR ECAN_IGH_BUILD_DEMO STREQUAL "AUTO")
         ecan_igh_mcan_pdo_codec
         ecan_igh_adapter
     )
+
+    add_library(dm_motor STATIC
+        dm_motor/dm_motor.c
+    )
+    target_include_directories(dm_motor PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/dm_motor
+    )
+    target_link_libraries(dm_motor PUBLIC
+        dm_motor_protocol
+        ecan_igh_mcan_port
+    )
+
+    add_library(dm_robot STATIC
+        dm_motor/dm_robot.c
+    )
+    target_include_directories(dm_robot PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/dm_motor
+    )
+    target_link_libraries(dm_robot PUBLIC
+        dm_motor_protocol
+        ecan_igh_mcan_port
+    )
+
+    add_executable(dm_motor_demo
+        dm_motor/dm_motor_demo.c
+    )
+    set_target_properties(dm_motor_demo PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+    target_include_directories(dm_motor_demo PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/dm_motor
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/common
+    )
+    target_link_libraries(dm_motor_demo PRIVATE dm_motor)
 
     if(BUILD_TESTING AND UNIX)
         add_executable(igh_mcan_stop_test tests/mcan_stop_test.c)
