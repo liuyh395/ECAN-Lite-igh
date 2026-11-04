@@ -236,6 +236,15 @@ if(ECAN_IGH_BUILD_DEMO STREQUAL "ON" OR ECAN_IGH_BUILD_DEMO STREQUAL "AUTO")
     )
     target_link_libraries(dm_motor_demo PRIVATE dm_motor)
 
+    add_executable(dm_robot_usb2can_test
+        dm_motor/dm_robot_usb2can_test.c
+    )
+    target_include_directories(dm_robot_usb2can_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/dm_motor
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/common
+    )
+    target_link_libraries(dm_robot_usb2can_test PRIVATE dm_robot)
+
     if(BUILD_TESTING AND UNIX)
         add_executable(igh_mcan_stop_test tests/mcan_stop_test.c)
         target_include_directories(igh_mcan_stop_test PRIVATE
