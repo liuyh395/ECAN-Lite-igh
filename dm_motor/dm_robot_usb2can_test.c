@@ -14,6 +14,7 @@
 
 #define DM_TEST_CYCLE_US 1000U
 #define DM_TEST_DEFAULT_LOG_EVERY 100U
+#define DM_TEST_WARMUP_CYCLES 32U
 
 static volatile sig_atomic_t stop_requested;
 
@@ -147,7 +148,9 @@ int main(int argc, char **argv)
 
     ecan_igh_default_config(&igh_config);
     igh_mcan_port_default_config(&mcan_config);
-    if (ecan_igh_config_set_slave_count(&igh_config, slave + 1U) != IGH_ECAN_OK ||
+    if (ecan_igh_config_apply_realtime_profile(
+            &igh_config, ECAN_IGH_PROFILE_DC_1MS_CROSS_CYCLE) != IGH_ECAN_OK ||
+        ecan_igh_config_set_slave_count(&igh_config, slave + 1U) != IGH_ECAN_OK ||
         ecan_igh_config_set_cycle_us(&igh_config, DM_TEST_CYCLE_US) != IGH_ECAN_OK ||
         ecan_igh_config_set_pdo_multiplier(&igh_config, 3U) != IGH_ECAN_OK ||
         dm_robot_apply_classic_can_config(&igh_config, &mcan_config,
@@ -164,9 +167,24 @@ int main(int argc, char **argv)
     rc = ecan_igh_wait_op_timeout(&igh, 10000U);
     if (rc != IGH_ECAN_OK) { final_rc = IGH_ECAN_EXIT_FAIL; goto close_igh; }
 
+    for (uint32_t i = 0U; i < DM_TEST_WARMUP_CYCLES; ++i) {
+        igh_mcan_rx_frame_t warmup_frames[DM_ROBOT_RX_CAPACITY];
+        igh_mcan_port_warmup_result_t warmup;
+        memset(&warmup, 0, sizeof(warmup));
+        rc = igh_mcan_port_warmup_cycle_checked(&port, warmup_frames,
+                                                DM_ROBOT_RX_CAPACITY, &warmup);
+        if (rc != IGH_ECAN_OK && rc != IGH_ECAN_NO_SPACE) {
+            fprintf(stderr, "warmup failed at cycle %" PRIu32 ": %d\n", i, rc);
+            final_rc = IGH_ECAN_EXIT_FAIL;
+            goto close_igh;
+        }
+    }
+
     printf("DM USB2CAN test: slave=%zu channels=CAN0..CAN3 bitrate=%" PRIu32
-           " cycle=%u us; TX log every %" PRIu32 " cycles\n",
-           slave, bitrate, DM_TEST_CYCLE_US, log_every);
+           " cycle=%u us profile=%s warmup=%u; TX log every %" PRIu32 " cycles\n",
+           slave, bitrate, DM_TEST_CYCLE_US,
+           ecan_igh_realtime_profile_name(ECAN_IGH_PROFILE_DC_1MS_CROSS_CYCLE),
+           DM_TEST_WARMUP_CYCLES, log_every);
     printf("fixed MIT command: position=1.0 velocity=2.0 kp=10.0 kd=0.5 torque=1.0\n");
     printf("default control IDs: 0x001..0x003 per channel; feedback IDs: 0x101..0x10C\n");
     printf("Connect USB2CAN to one selected CAN port; Ctrl-C stops the test.\n");

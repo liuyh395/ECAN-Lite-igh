@@ -143,7 +143,7 @@ if (dm_robot_send_control_all(&robot, &port,
 
 ## USB2CAN 联调测试
 
-新增的 `dm_robot_usb2can_test` 是无真实电机时的总线联调程序：树莓派上的 EtherCAT2CAN 按 1 ms 周期向 CAN0～CAN3 持续发送固定 MIT 帧；电脑通过 USB2CAN 可读取这些帧，也可向总线发送模拟达妙反馈帧。程序打印收到帧的原始 ID/DLC/数据，并对匹配的反馈帧显示解析值。
+新增的 `dm_robot_usb2can_test` 是无真实电机时的总线联调程序：树莓派上的 EtherCAT2CAN 使用仓库官方的 `ECAN_IGH_PROFILE_DC_1MS_CROSS_CYCLE` profile，按 1 ms 周期向 CAN0～CAN3 持续发送固定 MIT 帧；电脑通过 USB2CAN 可读取这些帧，也可向总线发送模拟达妙反馈帧。程序启动后先执行 32 个 warm-up 周期，再进入打印和正式测试。程序打印收到帧的原始 ID/DLC/数据，并对匹配的反馈帧显示解析值。
 
 测试固定 MIT 指令为 `position=1.0, velocity=2.0, kp=10.0, kd=0.5, torque=1.0`。程序启用四路通道，但只有连接 USB2CAN 的那路能在该 USB2CAN 上看到。默认通道映射如下：
 
