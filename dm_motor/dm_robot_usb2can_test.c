@@ -161,8 +161,8 @@ int main(int argc, char **argv)
 
     rc = ecan_igh_init(&igh, &igh_config);
     if (rc != IGH_ECAN_OK) return IGH_ECAN_EXIT_FAIL;
-    rc = igh_mcan_po
-    rt_init(&port, &igh, &mcan_config);
+    rc = igh_mcan_port_init(&port, &igh, &mcan_config);
+
     if (rc != IGH_ECAN_OK) { final_rc = IGH_ECAN_EXIT_FAIL; goto close_igh; }
     rc = ecan_igh_wait_op_timeout(&igh, 10000U);
     if (rc != IGH_ECAN_OK) { final_rc = IGH_ECAN_EXIT_FAIL; goto close_igh; }
