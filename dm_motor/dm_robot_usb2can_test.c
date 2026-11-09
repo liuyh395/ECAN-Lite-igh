@@ -117,6 +117,7 @@ static void print_feedback(dm_robot_t *robot, const igh_mcan_rx_frame_t *rx,
     robot->motors[index].feedback = feedback;
     robot->motors[index].feedback_received++;
     robot->motors[index].has_feedback = 1U;
+    stats->accepted_feedback++;
     // printf("  parsed motor[%d] CAN%u motor_id=%u error=0x%X "
     //        "pos=%.5f rad vel=%.5f rad/s torque=%.5f Nm MOS=%u C rotor=%u C\n",
     //        index, rx->frame.channel, feedback.motor_id, feedback.error_state,
@@ -269,6 +270,8 @@ int main(int argc, char **argv)
             break;
         }
         for (size_t r = 0; r < rx_count; ++r) {
+            stats.raw_rx_frames++;
+            stats.raw_rx_bytes += rx_frames[r].frame.data_len;
             // print_frame("RX", &rx_frames[r].frame);
             print_feedback(&robot, &rx_frames[r], &stats);
         }
