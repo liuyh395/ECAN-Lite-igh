@@ -164,6 +164,8 @@ sudo ./dm_robot_usb2can_test --slave 0 --bitrate 1000000
 
 默认持续运行，按 `Ctrl-C` 退出。发送帧每 100 个周期打印一次（约每 100 ms），收到的帧则立即打印；如果想每周期打印 12 条 TX 帧，可用 `--log-every 1`，但高频终端输出会影响 1 ms 周期的调度。`--cycles N` 可限制运行周期数。该程序需要从站处于 OP 状态，并使用已有的 IgH EtherCAT 运行环境。
 
+程序退出时会输出 `rx_stats` 分层统计：`raw_frames` 是 EtherCAT2CAN 实际交给应用的原始帧数，`accepted` 是成功解析并计入电机反馈的数量；`format_rejected`、`can_id_zero`、`can_id_unmatched`、`motor_id_mismatch` 和 `decode_errors` 分别表示格式、ID 或数据解析阶段被排除的数量。`no_space` 表示某个 EtherCAT 周期接收缓冲区不足，`receive_errors`、`cycle_begin_errors`、`cycle_end_errors` 表示周期 API 错误。判断丢帧时先比较 `raw_frames` 与 USB2CAN 的发送数，再看 `accepted` 与 `raw_frames` 的差值，不能只看某个 `motor[*].feedback_frames`。
+
 要模拟 CAN0 上电机 1 的反馈，在电脑 CAN 上位机选择 **标准帧**、ID `0x101`、DLC `8`，发送数据：
 
 ```text

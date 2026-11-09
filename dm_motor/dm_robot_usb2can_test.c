@@ -18,6 +18,25 @@
 
 static volatile sig_atomic_t stop_requested;
 
+typedef struct {
+    uint64_t tx_attempted;
+    uint64_t tx_sent;
+    uint64_t tx_errors;
+    uint64_t raw_rx_frames;
+    uint64_t raw_rx_bytes;
+    uint64_t format_rejected;
+    uint64_t can_id_zero;
+    uint64_t can_id_unmatched;
+    uint64_t motor_id_mismatch;
+    uint64_t decode_errors;
+    uint64_t accepted_feedback;
+    uint64_t receive_no_space;
+    uint64_t receive_errors;
+    uint64_t cycle_begin_errors;
+    uint64_t cycle_end_errors;
+    uint8_t can_id_zero_warning_printed;
+} dm_test_stats_t;
+
 static void on_signal(int signal_number)
 {
     (void)signal_number;
@@ -45,20 +64,52 @@ static int find_motor(const dm_robot_t *robot, const igh_mcan_frame_t *frame)
     return -1;
 }
 
-static void print_feedback(dm_robot_t *robot, const igh_mcan_rx_frame_t *rx)
+static int find_motor_by_payload_id(const dm_robot_t *robot,
+                                    const igh_mcan_rx_frame_t *rx)
+{
+    uint8_t motor_id;
+    if (rx->frame.can_id != 0U || rx->frame.data_len != DM_MOTOR_PAYLOAD_SIZE)
+        return -1;
+    motor_id = (uint8_t)(rx->frame.data[0] & 0x0FU);
+    for (size_t i = 0; i < DM_ROBOT_MOTOR_COUNT; ++i) {
+        const dm_robot_motor_config_t *c = &robot->motors[i].config;
+        if (rx->frame.channel == c->channel && c->motor_id == motor_id)
+            return (int)i;
+    }
+    return -1;
+}
+
+static void print_feedback(dm_robot_t *robot, const igh_mcan_rx_frame_t *rx,
+                           dm_test_stats_t *stats)
 {
     dm_motor_feedback_t feedback;
     int index;
     if (rx->slave_pos != (int)robot->slave_pos || rx->frame.is_canfd ||
-        rx->frame.data_len != DM_MOTOR_PAYLOAD_SIZE) return;
+        rx->frame.data_len != DM_MOTOR_PAYLOAD_SIZE) {
+        stats->format_rejected++;
+        return;
+    }
+    if (rx->frame.can_id == 0U) stats->can_id_zero++;
     index = find_motor(robot, &rx->frame);
-    if (index < 0) return;
+    if (index < 0 && rx->frame.can_id == 0U) {
+        index = find_motor_by_payload_id(robot, rx);
+        if (index >= 0 && !stats->can_id_zero_warning_printed) {
+            printf("  warning: RX CAN ID is 0x000; matching by feedback payload ID\n");
+            stats->can_id_zero_warning_printed = 1U;
+        }
+    }
+    if (index < 0) {
+        stats->can_id_unmatched++;
+        return;
+    }
     if (dm_motor_unpack_feedback(&robot->motors[index].config.limits,
                                  rx->frame.data, &feedback) != 0) {
+        stats->decode_errors++;
         printf("  feedback decode failed for motor[%d]\n", index);
         return;
     }
     if (feedback.motor_id != robot->motors[index].config.motor_id) {
+        stats->motor_id_mismatch++;
         printf("  feedback motor ID mismatch: expected=%u got=%u\n",
                robot->motors[index].config.motor_id, feedback.motor_id);
         return;
@@ -66,6 +117,7 @@ static void print_feedback(dm_robot_t *robot, const igh_mcan_rx_frame_t *rx)
     robot->motors[index].feedback = feedback;
     robot->motors[index].feedback_received++;
     robot->motors[index].has_feedback = 1U;
+    stats->accepted_feedback++;
     printf("  parsed motor[%d] CAN%u motor_id=%u error=0x%X "
            "pos=%.5f rad vel=%.5f rad/s torque=%.5f Nm MOS=%u C rotor=%u C\n",
            index, rx->frame.channel, feedback.motor_id, feedback.error_state,
@@ -119,9 +171,12 @@ int main(int argc, char **argv)
     uint32_t cycles = UINT32_MAX;
     uint32_t bitrate = 1000000U;
     uint32_t log_every = DM_TEST_DEFAULT_LOG_EVERY;
+    dm_test_stats_t stats;
     size_t slave = 0U;
     int rc;
     int final_rc = IGH_ECAN_EXIT_OK;
+
+    memset(&stats, 0, sizeof(stats));
 
     rc = parse_args(argc, argv, &cycles, &slave, &bitrate, &log_every);
     if (rc != 0) return rc > 0 ? IGH_ECAN_EXIT_OK : IGH_ECAN_EXIT_ARG_ERROR;
@@ -199,17 +254,26 @@ int main(int argc, char **argv)
         size_t rx_count = 0U;
         (void) igh_rt_periodic_clock_wait(&clock);
         rc = igh_mcan_port_cycle_begin_checked(&port);
-        if (rc != IGH_ECAN_OK) { final_rc = IGH_ECAN_EXIT_FAIL; break; }
+        if (rc != IGH_ECAN_OK) {
+            stats.cycle_begin_errors++;
+            final_rc = IGH_ECAN_EXIT_FAIL;
+            break;
+        }
 
         rc = igh_mcan_port_receive(&port, rx_frames, DM_ROBOT_RX_CAPACITY, &rx_count);
-        if (rc != IGH_ECAN_OK && rc != IGH_ECAN_NO_SPACE) {
+        if (rc == IGH_ECAN_NO_SPACE) {
+            stats.receive_no_space++;
+        } else if (rc != IGH_ECAN_OK) {
+            stats.receive_errors++;
             (void)igh_mcan_port_cycle_abort_checked(&port);
             final_rc = IGH_ECAN_EXIT_FAIL;
             break;
         }
         for (size_t r = 0; r < rx_count; ++r) {
+            stats.raw_rx_frames++;
+            stats.raw_rx_bytes += rx_frames[r].frame.data_len;
             print_frame("RX", &rx_frames[r].frame);
-            print_feedback(&robot, &rx_frames[r]);
+            print_feedback(&robot, &rx_frames[r], &stats);
         }
 
         for (size_t i = 0; i < DM_ROBOT_MOTOR_COUNT; ++i) {
@@ -234,21 +298,42 @@ int main(int argc, char **argv)
             rc = igh_mcan_port_send_can(&port, (int)slave, c->channel,
                                         c->command_id, c->extended_id,
                                         payload, sizeof(payload));
+            stats.tx_attempted++;
             if (rc != IGH_ECAN_OK) {
+                stats.tx_errors++;
                 (void)igh_mcan_port_cycle_abort_checked(&port);
                 final_rc = IGH_ECAN_EXIT_FAIL;
                 goto finish_test;
             }
+            stats.tx_sent++;
             robot.motors[i].commands_sent++;
         }
         rc = igh_mcan_port_cycle_end_checked(&port);
-        if (rc != IGH_ECAN_OK) { final_rc = IGH_ECAN_EXIT_FAIL; break; }
+        if (rc != IGH_ECAN_OK) {
+            stats.cycle_end_errors++;
+            final_rc = IGH_ECAN_EXIT_FAIL;
+            break;
+        }
         robot.cycles_completed++;
         if (cycle % log_every == 0U) fflush(stdout);
     }
 
 finish_test:
     printf("stopped: cycles=%" PRIu64 "\n", robot.cycles_completed);
+    printf("tx_stats attempted=%" PRIu64 " sent=%" PRIu64
+           " errors=%" PRIu64 "\n",
+           stats.tx_attempted, stats.tx_sent, stats.tx_errors);
+    printf("rx_stats raw_frames=%" PRIu64 " raw_bytes=%" PRIu64
+           " accepted=%" PRIu64 " format_rejected=%" PRIu64
+           " can_id_zero=%" PRIu64 " can_id_unmatched=%" PRIu64
+           " motor_id_mismatch=%" PRIu64 " decode_errors=%" PRIu64
+           " no_space=%" PRIu64 " receive_errors=%" PRIu64
+           " cycle_begin_errors=%" PRIu64 " cycle_end_errors=%" PRIu64 "\n",
+           stats.raw_rx_frames, stats.raw_rx_bytes, stats.accepted_feedback,
+           stats.format_rejected, stats.can_id_zero, stats.can_id_unmatched,
+           stats.motor_id_mismatch, stats.decode_errors,
+           stats.receive_no_space, stats.receive_errors,
+           stats.cycle_begin_errors, stats.cycle_end_errors);
     for (size_t i = 0; i < DM_ROBOT_MOTOR_COUNT; ++i)
         printf("motor[%zu] CAN%u feedback_frames=%" PRIu64 "\n", i,
                robot.motors[i].config.channel, robot.motors[i].feedback_received);
