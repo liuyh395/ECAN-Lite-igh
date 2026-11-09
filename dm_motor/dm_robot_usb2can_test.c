@@ -270,7 +270,7 @@ int main(int argc, char **argv)
         }
         for (size_t r = 0; r < rx_count; ++r) {
             // print_frame("RX", &rx_frames[r].frame);
-            print_feedback(&robot, &rx_frames[r]);
+            print_feedback(&robot, &rx_frames[r], &stats);
         }
 
         for (size_t i = 0; i < DM_ROBOT_MOTOR_COUNT; ++i) {
