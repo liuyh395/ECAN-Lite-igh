@@ -13,7 +13,7 @@
 #include "igh_example_args.h"
 
 #define DM_TEST_CYCLE_US 1000U
-#define DM_TEST_DEFAULT_LOG_EVERY 100U
+#define DM_TEST_DEFAULT_LOG_EVERY 1000U
 #define DM_TEST_WARMUP_CYCLES 32U
 
 static volatile sig_atomic_t stop_requested;
@@ -66,11 +66,11 @@ static void print_feedback(dm_robot_t *robot, const igh_mcan_rx_frame_t *rx)
     robot->motors[index].feedback = feedback;
     robot->motors[index].feedback_received++;
     robot->motors[index].has_feedback = 1U;
-    printf("  parsed motor[%d] CAN%u motor_id=%u error=0x%X "
-           "pos=%.5f rad vel=%.5f rad/s torque=%.5f Nm MOS=%u C rotor=%u C\n",
-           index, rx->frame.channel, feedback.motor_id, feedback.error_state,
-           feedback.position, feedback.velocity, feedback.torque,
-           feedback.mos_temperature, feedback.rotor_temperature);
+    // printf("  parsed motor[%d] CAN%u motor_id=%u error=0x%X "
+    //        "pos=%.5f rad vel=%.5f rad/s torque=%.5f Nm MOS=%u C rotor=%u C\n",
+    //        index, rx->frame.channel, feedback.motor_id, feedback.error_state,
+    //        feedback.position, feedback.velocity, feedback.torque,
+    //        feedback.mos_temperature, feedback.rotor_temperature);
 }
 
 static void usage(const char *program)
@@ -208,7 +208,7 @@ int main(int argc, char **argv)
             break;
         }
         for (size_t r = 0; r < rx_count; ++r) {
-            print_frame("RX", &rx_frames[r].frame);
+            // print_frame("RX", &rx_frames[r].frame);
             print_feedback(&robot, &rx_frames[r]);
         }
 
@@ -229,7 +229,7 @@ int main(int argc, char **argv)
                 tx_frame.is_extended = c->extended_id;
                 tx_frame.data_len = DM_MOTOR_PAYLOAD_SIZE;
                 memcpy(tx_frame.data, payload, sizeof(payload));
-                print_frame("TX", &tx_frame);
+                // print_frame("TX", &tx_frame);
             }
             rc = igh_mcan_port_send_can(&port, (int)slave, c->channel,
                                         c->command_id, c->extended_id,

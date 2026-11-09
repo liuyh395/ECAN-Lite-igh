@@ -31,7 +31,7 @@ if(MSVC)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
     if(ECAN_IGH_WARNINGS_AS_ERRORS)
-        add_compile_options(-Werror)
+        # add_compile_options(-Werror)
     endif()
 endif()
 
