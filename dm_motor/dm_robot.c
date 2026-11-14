@@ -122,8 +122,8 @@ static int process_feedback(dm_robot_t *robot,
     return accepted;
 }
 
-int dm_robot_cycle(dm_robot_t *robot, igh_mcan_port_t *port,
-                   size_t *received_count)
+int dm_robot_cycle_mask(dm_robot_t *robot, igh_mcan_port_t *port,
+                        uint16_t active_mask, size_t *received_count)
 {
     igh_mcan_rx_frame_t frames[DM_ROBOT_RX_CAPACITY];
     size_t count = 0U;
@@ -139,6 +139,7 @@ int dm_robot_cycle(dm_robot_t *robot, igh_mcan_port_t *port,
     (void)process_feedback(robot, frames, count);
     if (received_count != NULL) *received_count = count;
     for (size_t i = 0; i < DM_ROBOT_MOTOR_COUNT; ++i) {
+        if ((active_mask & (uint16_t)(1U << i)) == 0U) continue;
         rc = send_one(robot, port, i);
         if (rc != IGH_ECAN_OK) {
             (void)igh_mcan_port_cycle_abort_checked(port);
@@ -150,8 +151,14 @@ int dm_robot_cycle(dm_robot_t *robot, igh_mcan_port_t *port,
     return rc;
 }
 
-int dm_robot_send_control_all(dm_robot_t *robot, igh_mcan_port_t *port,
-                              dm_motor_control_t control)
+int dm_robot_cycle(dm_robot_t *robot, igh_mcan_port_t *port,
+                   size_t *received_count)
+{
+    return dm_robot_cycle_mask(robot, port, UINT16_MAX, received_count);
+}
+
+int dm_robot_send_control_mask(dm_robot_t *robot, igh_mcan_port_t *port,
+                               uint16_t active_mask, dm_motor_control_t control)
 {
     uint8_t payload[DM_MOTOR_PAYLOAD_SIZE];
     int rc;
@@ -160,6 +167,7 @@ int dm_robot_send_control_all(dm_robot_t *robot, igh_mcan_port_t *port,
     rc = igh_mcan_port_cycle_begin_checked(port);
     if (rc != IGH_ECAN_OK) return rc;
     for (size_t i = 0; i < DM_ROBOT_MOTOR_COUNT; ++i) {
+        if ((active_mask & (uint16_t)(1U << i)) == 0U) continue;
         const dm_robot_motor_config_t *c = &robot->motors[i].config;
         rc = igh_mcan_port_send_can(port, (int)robot->slave_pos, c->channel,
                                     c->command_id, c->extended_id,
@@ -170,4 +178,10 @@ int dm_robot_send_control_all(dm_robot_t *robot, igh_mcan_port_t *port,
         }
     }
     return igh_mcan_port_cycle_end_checked(port);
+}
+
+int dm_robot_send_control_all(dm_robot_t *robot, igh_mcan_port_t *port,
+                              dm_motor_control_t control)
+{
+    return dm_robot_send_control_mask(robot, port, UINT16_MAX, control);
 }

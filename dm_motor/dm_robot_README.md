@@ -1,5 +1,7 @@
 # 四路 CAN / 12 电机整机发送层
 
+Docker 中的 ROS 2 Humble 如何订阅整机 MIT 命令、通过宿主机 IgH 下发并回传反馈，见 [ROS 2 Humble Docker 接入指南](ROS2_Humble_Docker_接入指南.md)。该文档给出新增桥接程序的实现方案、通信协议与逐级联调步骤。
+
 新增的 `dm_robot.h/.c` 提供整机接口，原有 `dm_motor` 示例和底层文件保持不变。它只负责把已算好的 MIT 五元组编码为达妙 Classic CAN 8 字节帧，并通过 EtherCAT2CAN 的 `igh_mcan_port` 按周期发送；不负责步态计算或上层数据传输。
 
 ## 默认映射
@@ -201,3 +203,85 @@ sudo ./dm_robot_usb2can_test --slave 0 --bitrate 1000000
 | B | `01 66 66 63 95 55 1E 28` | 位置 `-2.5 rad`，速度 `-10.0 rad/s`，力矩 `-6.0 Nm` | 位置约 `-2.50000 rad`，速度约 `-9.98901 rad/s`，力矩约 `-6.00000 Nm` |
 
 两帧的首字节 `0x01` 表示电机 ID 为 1、错误码为 0；末两字节 `0x1E 0x28` 表示示例温度 30°C 和 40°C。解析值与目标值可能有少量差别，这是 MIT 反馈字段只有有限位数、需要量化编码造成的。其他通道或电机可以使用同一组数据，只需按前表替换反馈 CAN ID，并把首字节低四位改为对应电机 ID。
+
+## 真实达妙电机测试：dm_robot_motor_test
+
+新增 `dm_robot_motor_test.c`，沿用 USB2CAN 测试已验证的 **Classic CAN、1 Mbit/s、DC 1 ms cross-cycle、Sync0 shift 900 us、PDO multiplier 3、32 周期 warmup**。原 `dm_robot_usb2can_test.c` 保留，用于无电机抓帧测试；其非零固定指令不直接用于本实机程序。
+
+树莓派 EtherCAT 口连接模块 IN，电机接相应 CAN 口，供电按电机手册，CAN_H/CAN_L/信号地接对，总线两端按要求安装终端电阻。电机须已配置为 MIT 模式及 1 Mbit/s；程序不会自动更改电机内部的工作模式、ID 或量程。首次测试固定电机、卸载或架空腿部，并保留可直接切断电机动力电源的手段。
+
+先确认实际电机型号的 MIT 量程，必要时修改本程序 `dm_robot_default_config(configs)` 后面的 `configs[i].limits`。当前默认位置 ±12.5 rad、速度 ±45 rad/s、力矩 ±18 Nm、Kp 0..500、Kd 0..5，必须与电机配置一致。程序对超出配置量程的输入直接报参数错误。
+
+在树莓派 `~/ECAN-Lite-igh` 内新增目标并构建（本轮没有在 Windows 上编译）：
+
+```sh
+cmake -S . -B build \
+  -DECRT_INCLUDE_DIR=/opt/etherlab/include \
+  -DECRT_LIBRARY=/opt/etherlab/lib/libethercat.so \
+  -DECAN_IGH_BUILD_DEMO=ON
+cmake --build build --target dm_robot_motor_test -j"$(nproc)"
+```
+
+### 1. 单电机阻尼测试
+
+例如 CAN0 电机 1，控制 ID `0x001`、反馈 ID `0x101`：
+
+```sh
+sudo ./build/dm_robot_motor_test --motor 0 --enable-motor \
+  --command-id 0x001 --feedback-id 0x101 --motor-id 1 --cycles 5000
+```
+
+默认指令为 `position=0 velocity=0 kp=0 kd=0.2 torque=0`。Kp 为 0，不会以零位置作为位置闭环目标；Kd 提供小阻尼，用于先验证使能、指令发送和反馈。MIT 量化后零附近会有小偏差。阻尼测试不是位置保持，承重关节可能下落，因此应在卸载状态进行。
+
+默认运行 5000 个 MIT 周期（约 5 秒），可按 Ctrl-C 提前停止。启动时显示所选电机的 CAN 通道、控制/反馈 ID 和固定 MIT 8 字节发送模板；每 1000 周期显示反馈计数及最新解析的位置、速度、力矩、状态 nibble 和温度。`--log-every 100` 可改为每约 100 ms 显示一次；本程序不逐帧打印，以减少日志对周期的影响。
+
+不加 `--enable-motor` 时为**只接收模式**：不会发使能、MIT 指令或失能。部分达妙电机只在接收命令后回复，只接收模式中没有反馈不一定表示通信故障。
+
+反馈严格按从站、CAN 通道、反馈 CAN ID、标准/扩展标志、8 字节长度及数据低四位 motor ID 匹配，**不沿用 USB2CAN 测试的 ID=0 诊断兜底**。若 `feedback_frames=0`，先核对实际反馈 ID、内部 ID、工作模式和接线。状态 nibble 原样显示为 `state`；某些型号的 `0x1` 表示使能，不能一律视为故障。
+
+### 2. 指定实际 MIT 指令
+
+五个命令字段都可由参数指定。例如在已确认当前位置接近 `0.1 rad`、方向与机械行程允许时，低增益测试该绝对位置：
+
+```sh
+sudo ./build/dm_robot_motor_test --motor 0 --enable-motor \
+  --position 0.1 --velocity 0 --kp 1 --kd 0.2 --torque 0 --cycles 3000
+```
+
+`--position` 单位为 rad，`--velocity` 为 rad/s，`--torque` 为 Nm（需符合电机协议的力矩定义）。位置是电机协议的**绝对位置**，不是相对当前角度的偏移；启用非零 Kp 前先读取实际位置。本程序发送固定五元组，不生成步态或运动轨迹。
+
+### 3. 选择其他电机或全部电机
+
+`--motor` 是配置数组索引，不是 CAN ID。默认索引与布线对应如下：
+
+| CAN 通道 | 电机 1 索引 | 电机 2 索引 | 电机 3 索引 |
+|---|---:|---:|---:|
+| CAN0 | 0 | 1 | 2 |
+| CAN1 | 3 | 4 | 5 |
+| CAN2 | 6 | 7 | 8 |
+| CAN3 | 9 | 10 | 11 |
+
+例如 CAN3 电机 3：
+
+```sh
+sudo ./build/dm_robot_motor_test --motor 11 --enable-motor \
+  --command-id 0x003 --feedback-id 0x10C --motor-id 3
+```
+
+确认全部 12 台电机映射和量程后，可执行：
+
+```sh
+sudo ./build/dm_robot_motor_test --all --enable-motor --cycles 5000
+```
+
+`--all` 每个周期发送 12 条指令，每路 3 条，全部采用同一个命令五元组。它用于整体通信验证，不是四足站立或步态程序。全部模式不接受 `--command-id`、`--feedback-id`、`--motor-id` 覆盖，应在 `configs[]` 中逐台填写实际参数。单电机模式只对选定电机发送控制字和 MIT 指令。
+
+### 4. 退出与统计边界
+
+正常到期、Ctrl-C/SIGTERM 或运行中通信 API 报错时，默认对选中电机尝试连续 3 周期发送 `FF FF FF FF FF FF FF FD` 失能帧，然后继续交换 5 周期 PDO，给桥接模块处理队列的时间。使能帧为 `FF FF FF FF FF FF FF FC`。程序不会发送设零或清错控制字。
+
+`--keep-enabled` 可显式跳过正常退出时的失能，仅供已确认有后续控制接管的场合；运行报错仍尝试失能。失能写入成功及 PDO drain 完成**不等于收到电机失能确认**；断线、进程被 SIGKILL 或主机掉电时，退出代码无法保证执行。电机内部命令超时保护应按设备手册配置。
+
+退出显示各选中电机的 `queued`、`feedback_frames` 及主机周期 min/max/avg。`queued` 是发送 API 接受的 MIT 帧数，不是 CAN ACK 或电机执行次数；`cycles` 包含退出 drain 中的只接收周期，不能直接当成 MIT 发送次数。最新反馈值可能是之前收到的缓存值，应结合反馈计数判断是否仍在更新。本程序暂不实现反馈超时、故障自动停机状态机或使能状态确认，先用于台架联调；不能仅凭无通信 API 错误认定电机状态正常。
+
+整机库新增 `dm_robot_cycle_mask()` 和 `dm_robot_send_control_mask()`：mask 第 i 位选择 `motors[i]`，mask=0 时只交换 PDO 并接收，不发电机指令；原全电机接口继续调用同一路径，保持原有调用方式。

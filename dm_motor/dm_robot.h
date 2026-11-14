@@ -60,9 +60,16 @@ int dm_robot_submit_all(dm_robot_t *robot,
 int dm_robot_cycle(dm_robot_t *robot, igh_mcan_port_t *port,
                    size_t *received_count);
 
+/* 与 dm_robot_cycle 相同，但只发送 active_mask 中的电机指令。
+ * 接收仍会处理全部配置的反馈帧，便于单电机实机联调。 */
+int dm_robot_cycle_mask(dm_robot_t *robot, igh_mcan_port_t *port,
+                        uint16_t active_mask, size_t *received_count);
+
 /* 在单个EtherCAT周期内向全部12台电机发送一条特殊控制字。 */
 int dm_robot_send_control_all(dm_robot_t *robot, igh_mcan_port_t *port,
                               dm_motor_control_t control);
+int dm_robot_send_control_mask(dm_robot_t *robot, igh_mcan_port_t *port,
+                               uint16_t active_mask, dm_motor_control_t control);
 
 #ifdef __cplusplus
 }
