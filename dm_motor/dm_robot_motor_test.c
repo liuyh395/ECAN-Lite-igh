@@ -20,7 +20,7 @@ static volatile sig_atomic_t stop_requested;
 typedef struct {
     uint32_t cycles, bitrate, log_every;
     size_t slave, motor;
-    uint8_t all, enable, keep_enabled;
+    uint8_t all, enable, keep_enabled, cycles_limited;
     uint32_t command_id, feedback_id, motor_id;
     dm_motor_command_t command;
 } test_options_t;
@@ -37,7 +37,7 @@ static void usage(const char *program)
     printf("  --motor N          motor index 0..11 (default 0); or --all\n");
     printf("  --enable-motor     send enable before MIT commands\n");
     printf("  --keep-enabled     skip disable on exit (requires --enable-motor)\n");
-    printf("  --cycles N         default 5000 cycles (about 5 seconds)\n");
+    printf("  --cycles N         run a fixed number of cycles (default: forever)\n");
     printf("  --slave N --bitrate N --log-every N\n");
     printf("  --command-id N --feedback-id N --motor-id N (single motor only)\n");
     printf("  --position F --velocity F --kp F --kd F --torque F\n");
@@ -53,8 +53,10 @@ static int parse_args(int argc, char **argv, test_options_t *o)
         else if (strcmp(argv[i], "--all") == 0) o->all = 1U;
         else if (strcmp(argv[i], "--enable-motor") == 0) o->enable = 1U;
         else if (strcmp(argv[i], "--keep-enabled") == 0) o->keep_enabled = 1U;
-        else if (strcmp(argv[i], "--cycles") == 0 && i + 1 < argc)
+        else if (strcmp(argv[i], "--cycles") == 0 && i + 1 < argc) {
             o->cycles = igh_example_u32(argv[++i]);
+            o->cycles_limited = 1U;
+        }
         else if (strcmp(argv[i], "--slave") == 0 && i + 1 < argc)
             o->slave = igh_example_size(argv[++i]);
         else if (strcmp(argv[i], "--bitrate") == 0 && i + 1 < argc)
@@ -82,7 +84,7 @@ static int parse_args(int argc, char **argv, test_options_t *o)
             return 1;
         } else return -1;
     }
-    if (o->cycles == 0U || o->log_every == 0U || o->bitrate == 0U ||
+    if ((o->cycles_limited && o->cycles == 0U) || o->log_every == 0U || o->bitrate == 0U ||
         o->motor >= DM_ROBOT_MOTOR_COUNT || o->slave >= ECAN_IGH_MAX_SLAVES ||
         (o->keep_enabled && !o->enable)) return -1;
     if ((o->command_id != UINT32_MAX && o->command_id > 0x7FFU) ||
@@ -154,7 +156,7 @@ int main(int argc, char **argv)
     dm_robot_motor_config_t configs[DM_ROBOT_MOTOR_COUNT];
     dm_robot_t robot;
     test_options_t o = {
-        .cycles = 5000U, .bitrate = 1000000U, .log_every = 1000U,
+        .bitrate = 1000000U, .log_every = 1000U,
         .command_id = UINT32_MAX, .feedback_id = UINT32_MAX, .motor_id = UINT32_MAX,
         .command = {0.0F, 0.0F, 0.0F, 0.2F, 0.0F}
     };
@@ -255,14 +257,15 @@ int main(int argc, char **argv)
             goto disable_motor;
         }
     }
-    for (uint32_t cycle = 0; cycle < o.cycles && !stop_requested; ++cycle) {
+    for (uint64_t cycle = 0; !stop_requested &&
+         (!o.cycles_limited || cycle < o.cycles); ++cycle) {
         uint64_t now = igh_rt_periodic_clock_wait(&clock);
         if (now == 0U) { final_rc = IGH_ECAN_EXIT_FAIL; break; }
         if (stop_requested) break;
         igh_rt_period_stats_sample(&periods, now, clock.cycle_ns);
         rc = dm_robot_cycle_mask(&robot, &port, o.enable ? mask : 0U, NULL);
         if (rc != IGH_ECAN_OK) {
-            fprintf(stderr, "robot cycle failed at %" PRIu32 ": %d\n", cycle, rc);
+            fprintf(stderr, "robot cycle failed at %" PRIu64 ": %d\n", cycle, rc);
             final_rc = IGH_ECAN_EXIT_FAIL;
             break;
         }
